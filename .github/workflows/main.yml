@@ -1,8 +1,8 @@
-name: Weekly Gmail Test
+name: SMTP Mail Test
 
 on:
   schedule:
-    - cron: '0 23 * * 0'
+    - cron: '0 23 * * 1'
   workflow_dispatch:
 
 jobs:
@@ -10,28 +10,29 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Send Gmail
+      - name: Send Mail
         env:
-          GMAIL_USER: ${{ secrets.GMAIL_USER }}
-          GMAIL_PASS: ${{ secrets.GMAIL_PASS }}
+          SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          SMTP_TO: ${{ secrets.SMTP_USER }}
         run: |
           python - <<EOF
           import os
           import smtplib
           from email.mime.text import MIMEText
 
-          gmail = os.environ["GMAIL_USER"]
-          password = os.environ["GMAIL_PASS"]
+          msg = MIMEText("GitHub Actions SMTPテスト")
+          msg["Subject"] = "SMTP Test"
+          msg["From"] = os.environ["SMTP_USER"]
+          msg["To"] = os.environ["SMTP_TO"]
 
-          msg = MIMEText("GitHub Actionsからのテストメールです")
-          msg["Subject"] = "Weekly Test Mail"
-          msg["From"] = gmail
-          msg["To"] = gmail
-
-          server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
-          server.login(gmail, password)
-          server.send_message(msg)
+          server = smtplib.SMTP(os.environ["SMTP_SERVER"], int(os.environ["SMTP_PORT"]))
+          server.starttls()
+          server.login(os.environ["SMTP_USER"], os.environ["SMTP_PASS"])
+          server.sendmail(msg["From"], msg["To"], msg.as_string())
           server.quit()
 
-          print("Mail sent!")
+          print("Mail sent")
           EOF
