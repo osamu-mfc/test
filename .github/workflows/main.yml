@@ -1,18 +1,37 @@
-name: Test Python
+name: Weekly Gmail Test
 
 on:
   schedule:
-    - cron: '0 23 * * *'  # 毎日 23:00 UTC（日本時間 8:00）
+    - cron: '0 23 * * 0'
   workflow_dispatch:
 
 jobs:
-  run-script:
+  send-mail:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Run Python
+      - name: Send Gmail
+        env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_PASS: ${{ secrets.GMAIL_PASS }}
         run: |
-          python -c "print('Hello from GitHub Actions')"
+          python - <<EOF
+          import os
+          import smtplib
+          from email.mime.text import MIMEText
+
+          gmail = os.environ["GMAIL_USER"]
+          password = os.environ["GMAIL_PASS"]
+
+          msg = MIMEText("GitHub Actionsからのテストメールです")
+          msg["Subject"] = "Weekly Test Mail"
+          msg["From"] = gmail
+          msg["To"] = gmail
+
+          server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
+          server.login(gmail, password)
+          server.send_message(msg)
+          server.quit()
+
+          print("Mail sent!")
+          EOF
