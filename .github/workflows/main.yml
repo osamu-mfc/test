@@ -1,7 +1,7 @@
 name: SMTP Mail Test
 on:
   schedule:
-    - cron: '0 23 * * 1'
+    - cron: '0 21 * * 2'  # JST 火曜 6:00
   workflow_dispatch:
 
 jobs:
@@ -55,12 +55,17 @@ jobs:
 
           df = pd.read_excel("/tmp/data.xlsx", sheet_name=0, header=1)
 
-          target_date = (datetime.today() - timedelta(days=3)).date()
+          # 実行日（火曜）の前週月曜〜日曜を算出
+          today      = datetime.today().date()
+          last_mon   = today - timedelta(days=today.weekday() + 7)  # 前週月曜
+          last_sun   = last_mon + timedelta(days=6)                 # 前週日曜
+          print(f"抽出範囲: {last_mon} 〜 {last_sun}")
 
+          # 希望納期を日付型に変換して絞り込み
           df["希望納期"] = pd.to_datetime(df["希望納期"], errors="coerce").dt.date
-          filtered = df[df["希望納期"] == target_date].copy()
+          filtered = df[(df["希望納期"] >= last_mon) & (df["希望納期"] <= last_sun)].copy()
 
-          print(f"対象日: {target_date}  該当件数: {len(filtered)}件")
+          print(f"該当件数: {len(filtered)}件")
 
           if len(filtered) == 0:
               with open("/tmp/result.json", "w") as f:
@@ -117,7 +122,10 @@ jobs:
           if len(groups) == 0:
               print("該当なし。メール送信スキップ。")
               exit(0)
-
+              
+          # CCはSMTP_USERを使用
+          cc_address = os.environ["SMTP_USER"]
+          
           for g in groups:
               staff       = g["担当者"]
               orders      = g["注文番号リスト"]
@@ -163,7 +171,8 @@ jobs:
                   msg["Subject"] = subject
                   msg["From"]    = os.environ["SMTP_USER"]
                   msg["To"]      = to_address
-
+                  msg["Cc"]      = cc_address
+                  
                   port = int(os.environ["SMTP_PORT"])
                   server_addr = os.environ["SMTP_SERVER"]
 
