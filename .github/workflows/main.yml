@@ -185,7 +185,6 @@ jobs:
                       server = smtplib.SMTP_SSL(server_addr, port)
                   else:
                       server = smtplib.SMTP(server_addr, port)
-                      server.starttls()
 
                   server.login(os.environ["SMTP_USER"], os.environ["SMTP_PASS"])
                   server.sendmail(msg["From"], all_recipients, msg.as_string())
