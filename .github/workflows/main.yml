@@ -96,7 +96,6 @@ jobs:
           from datetime import datetime, timedelta
 
           # 担当者→メールアドレス のマップを構築
-          # Secret形式: 長谷川,hasegawa@example.com\n伊藤,ito@example.com
           mail_map = {}
           for line in os.environ["STAFF_MAIL_MAP"].splitlines():
               line = line.strip()
