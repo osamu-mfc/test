@@ -45,7 +45,7 @@ jobs:
           print("Download complete: /tmp/data.xlsx")
           EOF
 
-      # ── STEP 2: Pandas で絞り込み・整形 ────────────────
+# ── STEP 2: Pandas で絞り込み・整形 ────────────────
       - name: Process with Pandas
         run: |
           python - <<EOF
@@ -54,17 +54,18 @@ jobs:
 
           df = pd.read_excel("/tmp/data.xlsx", sheet_name=0, header=1)
 
-          # 実行日 - 3日 の日付
           target_date = (datetime.today() - timedelta(days=3)).date()
 
-          # 希望納期を日付型に変換して絞り込み
           df["希望納期"] = pd.to_datetime(df["希望納期"], errors="coerce").dt.date
           filtered = df[df["希望納期"] == target_date].copy()
 
           print(f"対象日: {target_date}  該当件数: {len(filtered)}件")
 
-          # 本文用の表示形式に整形
-          # 顧客注文番号_製品コード 製品詳細 販売単価 x 数量 = 販売価格_希望納期_納入先
+          if len(filtered) == 0:
+              pd.DataFrame(columns=["担当者", "本文行"]).to_csv("/tmp/result.tsv", sep="\t", index=False)
+              print("該当なし。スキップ。")
+              exit(0)
+
           def format_row(row):
               return (
                   f"{row['顧客注文番号']}_{row['製品コード']} "
@@ -73,9 +74,8 @@ jobs:
                   f"{row['希望納期']}_{row['納入先']}"
               )
 
-          filtered["本文行"] = filtered.apply(format_row, axis=1)
+          filtered["本文行"] = filtered.apply(format_row, axis=1, result_type="reduce")
 
-          # 担当者ごとにTSVを保存
           filtered[["担当者", "本文行"]].to_csv("/tmp/result.tsv", sep="\t", index=False)
           print("Process complete: /tmp/result.tsv")
           EOF
