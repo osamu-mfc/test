@@ -109,12 +109,15 @@ jobs:
           import os, smtplib, json
           from email.mime.text import MIMEText
 
+          # 担当者→メールアドレスリスト のマップを構築（複数アドレス対応）
           mail_map = {}
           for line in os.environ["STAFF_MAIL_MAP"].splitlines():
               line = line.strip()
               if "," in line:
-                  name, address = line.split(",", 1)
-                  mail_map[name.strip()] = address.strip()
+                  parts = line.split(",")
+                  name  = parts[0].strip()
+                  addrs = [a.strip() for a in parts[1:] if a.strip()]
+                  mail_map[name] = addrs
 
           with open("/tmp/result.json", encoding="utf-8") as f:
               groups = json.load(f)
@@ -122,10 +125,10 @@ jobs:
           if len(groups) == 0:
               print("該当なし。メール送信スキップ。")
               exit(0)
-              
+
           # CCはSMTP_USERを使用
           cc_address = os.environ["SMTP_USER"]
-          
+
           for g in groups:
               staff       = g["担当者"]
               orders      = g["注文番号リスト"]
@@ -133,17 +136,15 @@ jobs:
               delivery_to = g["納入先"]
               details     = g["明細リスト"]
 
-              to_address = mail_map.get(staff)
-              if not to_address:
-                  print(f"⚠ {staff} のメールアドレスが見つかりません。スキップ。")
+              to_addresses = mail_map.get(staff)
+              if not to_addresses:
+                  print("⚠ " + staff + " のメールアドレスが見つかりません。スキップ。")
                   continue
 
-              # 件名は最初の注文番号を使用
-              subject = f"【自動送信】納品のご連絡（注文番号：{orders[0]}）"
-
-              # 注文番号リストを改行で並べる
               orders_text  = "\n".join(orders)
               details_text = "\n".join(details)
+
+              subject = "【自動送信】納品のご連絡（注文番号：" + orders[0] + "）"
 
               mail_body = (
                   staff + "様、\n"
@@ -172,9 +173,11 @@ jobs:
                   msg = MIMEText(mail_body, "plain", "utf-8")
                   msg["Subject"] = subject
                   msg["From"]    = os.environ["SMTP_USER"]
-                  msg["To"]      = to_address
+                  msg["To"]      = ", ".join(to_addresses)
                   msg["Cc"]      = cc_address
-                  
+
+                  all_recipients = to_addresses + [cc_address]
+
                   port = int(os.environ["SMTP_PORT"])
                   server_addr = os.environ["SMTP_SERVER"]
 
@@ -182,13 +185,14 @@ jobs:
                       server = smtplib.SMTP_SSL(server_addr, port)
                   else:
                       server = smtplib.SMTP(server_addr, port)
+                      server.starttls()
 
                   server.login(os.environ["SMTP_USER"], os.environ["SMTP_PASS"])
-                  server.sendmail(msg["From"], [to_address], msg.as_string())
+                  server.sendmail(msg["From"], all_recipients, msg.as_string())
                   server.quit()
-                  print(f"送信完了: {staff} <{to_address}>  注文{len(orders)}件")
+                  print("送信完了: " + staff + " " + str(to_addresses) + "  注文" + str(len(orders)) + "件")
 
               except Exception as e:
-                  print(f"Error ({staff}): {e}")
+                  print("Error (" + staff + "): " + str(e))
                   raise
           EOF
