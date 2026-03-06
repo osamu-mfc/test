@@ -29,7 +29,6 @@ jobs:
           msg["To"] = os.environ["SMTP_TO"]
 
           server = smtplib.SMTP(os.environ["SMTP_SERVER"], int(os.environ["SMTP_PORT"]))
-          server.starttls()
           server.login(os.environ["SMTP_USER"], os.environ["SMTP_PASS"])
           server.sendmail(msg["From"], msg["To"], msg.as_string())
           server.quit()
