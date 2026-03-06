@@ -146,7 +146,9 @@ jobs:
               details_text = "\n".join(details)
 
               mail_body = (
+                  staff + "様、\n"
                   "いつもお世話になっております。\n"
+                  "MFCテクノロジー伊藤です。\n\n"
                   "下記の通り、納品内容をご連絡いたします。\n"
                   "\n"
                   "■注文番号\n"
