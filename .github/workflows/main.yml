@@ -42,67 +42,108 @@ jobs:
 
           with open("/tmp/data.xlsx", "wb") as f:
               f.write(buffer.getvalue())
-
           print("Download complete: /tmp/data.xlsx")
           EOF
 
-      # ── STEP 2: Pandas で読み込み確認（先頭5行） ────────
+      # ── STEP 2: Pandas で絞り込み・整形 ────────────────
       - name: Process with Pandas
         run: |
           python - <<EOF
           import pandas as pd
+          from datetime import datetime, timedelta
 
           df = pd.read_excel("/tmp/data.xlsx", sheet_name=0, header=1)
 
-          # 先頭5行を確認用に保存
-          df.head(5).to_csv("/tmp/result.tsv", sep="\t", index=False)
-          print(f"Columns: {list(df.columns)}")
-          print(f"Total rows: {len(df)}  →  先頭5行を出力")
+          # 実行日 - 3日 の日付
+          target_date = (datetime.today() - timedelta(days=3)).date()
+
+          # 希望納期を日付型に変換して絞り込み
+          df["希望納期"] = pd.to_datetime(df["希望納期"], errors="coerce").dt.date
+          filtered = df[df["希望納期"] == target_date].copy()
+
+          print(f"対象日: {target_date}  該当件数: {len(filtered)}件")
+
+          # 本文用の表示形式に整形
+          # 顧客注文番号_製品コード 製品詳細 販売単価 x 数量 = 販売価格_希望納期_納入先
+          def format_row(row):
+              return (
+                  f"{row['顧客注文番号']}_{row['製品コード']} "
+                  f"{row['製品詳細']} "
+                  f"{int(row['販売単価'])} x {int(row['数量'])} = {int(row['販売価格'])}_"
+                  f"{row['希望納期']}_{row['納入先']}"
+              )
+
+          filtered["本文行"] = filtered.apply(format_row, axis=1)
+
+          # 担当者ごとにTSVを保存
+          filtered[["担当者", "本文行"]].to_csv("/tmp/result.tsv", sep="\t", index=False)
+          print("Process complete: /tmp/result.tsv")
           EOF
 
-      # ── STEP 3: メール送信 ─────────────────────────────
+      # ── STEP 3: 担当者ごとに個別メール送信 ─────────────
       - name: Send Mail
         env:
           SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
-          SMTP_TO: ${{ secrets.SMTP_USER }}
+          STAFF_MAIL_MAP: ${{ secrets.STAFF_MAIL_MAP }}
         run: |
           python - <<EOF
           import os, smtplib
           import pandas as pd
           from email.mime.text import MIMEText
+          from datetime import datetime, timedelta
+
+          # 担当者→メールアドレス のマップを構築
+          # Secret形式: 長谷川,hasegawa@example.com\n伊藤,ito@example.com
+          mail_map = {}
+          for line in os.environ["STAFF_MAIL_MAP"].splitlines():
+              line = line.strip()
+              if "," in line:
+                  name, address = line.split(",", 1)
+                  mail_map[name.strip()] = address.strip()
 
           df = pd.read_csv("/tmp/result.tsv", sep="\t")
 
-          header = "\t".join(df.columns.astype(str))
-          sep    = "-" * 60
-          rows   = ["\t".join(str(v) for v in row) for _, row in df.iterrows()]
-          table  = "\n".join([header, sep] + rows)
+          if len(df) == 0:
+              print("該当なし。メール送信スキップ。")
+              exit(0)
 
-          mail_body = f"【Excel読み込み確認 - 先頭5行】\n\n{table}"
+          target_date = (datetime.today() - timedelta(days=3)).date()
 
-          try:
-              msg = MIMEText(mail_body, "plain", "utf-8")
-              msg["Subject"] = "SMTP Test + Excel確認（先頭5行）"
-              msg["From"] = os.environ["SMTP_USER"]
-              msg["To"]   = os.environ["SMTP_TO"]
+          # 担当者ごとにグループ化して送信
+          for staff, group in df.groupby("担当者"):
+              to_address = mail_map.get(staff)
+              if not to_address:
+                  print(f"⚠ {staff} のメールアドレスが見つかりません。スキップ。")
+                  continue
 
-              port = int(os.environ["SMTP_PORT"])
-              server_addr = os.environ["SMTP_SERVER"]
+              lines = [f"希望納期 {target_date} の納期確認です。\n"]
+              for _, row in group.iterrows():
+                  lines.append(row["本文行"])
+              mail_body = "\n".join(lines)
 
-              if port == 465:
-                  server = smtplib.SMTP_SSL(server_addr, port)
-              else:
-                  server = smtplib.SMTP(server_addr, port)
+              try:
+                  msg = MIMEText(mail_body, "plain", "utf-8")
+                  msg["Subject"] = f"納期確認 {target_date}（{len(group)}件）"
+                  msg["From"] = os.environ["SMTP_USER"]
+                  msg["To"]   = to_address
 
-              server.login(os.environ["SMTP_USER"], os.environ["SMTP_PASS"])
-              server.sendmail(msg["From"], [msg["To"]], msg.as_string())
-              server.quit()
-              print("Mail sent")
+                  port = int(os.environ["SMTP_PORT"])
+                  server_addr = os.environ["SMTP_SERVER"]
 
-          except Exception as e:
-              print(f"Error: {e}")
-              raise
+                  if port == 465:
+                      server = smtplib.SMTP_SSL(server_addr, port)
+                  else:
+                      server = smtplib.SMTP(server_addr, port)
+
+                  server.login(os.environ["SMTP_USER"], os.environ["SMTP_PASS"])
+                  server.sendmail(msg["From"], [to_address], msg.as_string())
+                  server.quit()
+                  print(f"送信完了: {staff} <{to_address}>  {len(group)}件")
+
+              except Exception as e:
+                  print(f"Error ({staff}): {e}")
+                  raise
           EOF
