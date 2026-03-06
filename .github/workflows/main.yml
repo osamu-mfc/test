@@ -50,11 +50,12 @@ jobs:
         run: |
           python - <<EOF
           import pandas as pd
+          import json
           from datetime import datetime, timedelta
 
           df = pd.read_excel("/tmp/data.xlsx", sheet_name=0, header=1)
 
-          target_date = (datetime.today() + timedelta(days=3)).date()
+          target_date = (datetime.today() - timedelta(days=3)).date()
 
           df["希望納期"] = pd.to_datetime(df["希望納期"], errors="coerce").dt.date
           filtered = df[df["希望納期"] == target_date].copy()
@@ -62,25 +63,35 @@ jobs:
           print(f"対象日: {target_date}  該当件数: {len(filtered)}件")
 
           if len(filtered) == 0:
-              pd.DataFrame(columns=["担当者", "本文行"]).to_csv("/tmp/result.tsv", sep="\t", index=False)
+              with open("/tmp/result.json", "w") as f:
+                  json.dump([], f)
               print("該当なし。スキップ。")
               exit(0)
 
-          def format_row(row):
-              return (
-                  f"{row['顧客注文番号']}_{row['製品コード']} "
-                  f"{row['製品詳細']} "
-                  f"{int(row['販売単価'])} x {int(row['数量'])} = {int(row['販売価格'])}_"
-                  f"{row['希望納期']}_{row['納入先']}"
-              )
+          # 担当者・納入先・希望納期 の組み合わせでグループ化
+          groups = []
+          for (staff, delivery_to, delivery_date), group in filtered.groupby(["担当者", "納入先", "希望納期"]):
+              orders = group["顧客注文番号"].astype(str).tolist()
+              details = []
+              for _, row in group.iterrows():
+                  details.append(
+                      f"{row['製品詳細']} "
+                      f"{int(row['販売単価'])} x {int(row['数量'])} = {int(row['販売価格'])}"
+                  )
+              groups.append({
+                  "担当者": staff,
+                  "注文番号リスト": orders,
+                  "希望納期": str(delivery_date),
+                  "納入先": delivery_to,
+                  "明細リスト": details,
+              })
 
-          filtered["本文行"] = filtered.apply(format_row, axis=1, result_type="reduce")
-
-          filtered[["担当者", "本文行"]].to_csv("/tmp/result.tsv", sep="\t", index=False)
-          print("Process complete: /tmp/result.tsv")
+          with open("/tmp/result.json", "w", encoding="utf-8") as f:
+              json.dump(groups, f, ensure_ascii=False)
+          print(f"Process complete: {len(groups)}グループ → /tmp/result.json")
           EOF
 
-      # ── STEP 3: 担当者ごとに個別メール送信 ─────────────
+# ── STEP 3: 担当者ごとに個別メール送信 ─────────────
       - name: Send Mail
         env:
           SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
@@ -90,12 +101,9 @@ jobs:
           STAFF_MAIL_MAP: ${{ secrets.STAFF_MAIL_MAP }}
         run: |
           python - <<EOF
-          import os, smtplib
-          import pandas as pd
+          import os, smtplib, json
           from email.mime.text import MIMEText
-          from datetime import datetime, timedelta
 
-          # 担当者→メールアドレス のマップを構築
           mail_map = {}
           for line in os.environ["STAFF_MAIL_MAP"].splitlines():
               line = line.strip()
@@ -103,31 +111,58 @@ jobs:
                   name, address = line.split(",", 1)
                   mail_map[name.strip()] = address.strip()
 
-          df = pd.read_csv("/tmp/result.tsv", sep="\t")
+          with open("/tmp/result.json", encoding="utf-8") as f:
+              groups = json.load(f)
 
-          if len(df) == 0:
+          if len(groups) == 0:
               print("該当なし。メール送信スキップ。")
               exit(0)
 
-          target_date = (datetime.today() - timedelta(days=3)).date()
+          for g in groups:
+              staff       = g["担当者"]
+              orders      = g["注文番号リスト"]
+              delivery    = g["希望納期"]
+              delivery_to = g["納入先"]
+              details     = g["明細リスト"]
 
-          # 担当者ごとにグループ化して送信
-          for staff, group in df.groupby("担当者"):
               to_address = mail_map.get(staff)
               if not to_address:
                   print(f"⚠ {staff} のメールアドレスが見つかりません。スキップ。")
                   continue
 
-              lines = [f"希望納期 {target_date} の納期確認です。\n"]
-              for _, row in group.iterrows():
-                  lines.append(row["本文行"])
-              mail_body = "\n".join(lines)
+              # 件名は最初の注文番号を使用
+              subject = f"【自動送信】納品のご連絡（注文番号：{orders[0]}）"
+
+              # 注文番号リストを改行で並べる
+              orders_text  = "\n".join(orders)
+              details_text = "\n".join(details)
+
+              mail_body = (
+                  "いつもお世話になっております。\n"
+                  "下記の通り、納品内容をご連絡いたします。\n"
+                  "\n"
+                  "■注文番号\n"
+                  + orders_text +
+                  "\n\n"
+                  "■納品予定日\n"
+                  + delivery +
+                  "\n\n"
+                  "■納入先\n"
+                  + delivery_to +
+                  "\n\n"
+                  "■納品内容\n"
+                  + details_text +
+                  "\n\n"
+                  "ご確認のほどよろしくお願いいたします。\n"
+                  "※本メールはシステムより自動送信されています。\n"
+                  "---"
+              )
 
               try:
                   msg = MIMEText(mail_body, "plain", "utf-8")
-                  msg["Subject"] = f"納期確認 {target_date}（{len(group)}件）"
-                  msg["From"] = os.environ["SMTP_USER"]
-                  msg["To"]   = to_address
+                  msg["Subject"] = subject
+                  msg["From"]    = os.environ["SMTP_USER"]
+                  msg["To"]      = to_address
 
                   port = int(os.environ["SMTP_PORT"])
                   server_addr = os.environ["SMTP_SERVER"]
@@ -136,11 +171,12 @@ jobs:
                       server = smtplib.SMTP_SSL(server_addr, port)
                   else:
                       server = smtplib.SMTP(server_addr, port)
+                      server.starttls()
 
                   server.login(os.environ["SMTP_USER"], os.environ["SMTP_PASS"])
                   server.sendmail(msg["From"], [to_address], msg.as_string())
                   server.quit()
-                  print(f"送信完了: {staff} <{to_address}>  {len(group)}件")
+                  print(f"送信完了: {staff} <{to_address}>  注文{len(orders)}件")
 
               except Exception as e:
                   print(f"Error ({staff}): {e}")
