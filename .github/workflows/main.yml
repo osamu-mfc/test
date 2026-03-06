@@ -1,7 +1,7 @@
 name: SMTP Mail Test
 on:
   schedule:
-    - cron: '0 21 * * 2'  # JST 火曜 6:00
+    - cron: '0 21 * * 4'  # JST 金曜 6:00（UTC木曜21時）
   workflow_dispatch:
 
 jobs:
@@ -55,15 +55,15 @@ jobs:
 
           df = pd.read_excel("/tmp/data.xlsx", sheet_name=0, header=1)
 
-          # 実行日（火曜）の前週月曜〜日曜を算出
-          today      = datetime.today().date()
-          last_mon   = today - timedelta(days=today.weekday() + 7)  # 前週月曜
-          last_sun   = last_mon + timedelta(days=6)                 # 前週日曜
-          print(f"抽出範囲: {last_mon} 〜 {last_sun}")
+          # 実行日の翌日から7日間
+          today    = datetime.today().date()
+          start    = today + timedelta(days=1)   # 翌日（土）
+          end      = start + timedelta(days=6)   # 7日後（金）
+          print(f"抽出範囲: {start} 〜 {end}")
 
           # 希望納期を日付型に変換して絞り込み
           df["希望納期"] = pd.to_datetime(df["希望納期"], errors="coerce").dt.date
-          filtered = df[(df["希望納期"] >= last_mon) & (df["希望納期"] <= last_sun)].copy()
+          filtered = df[(df["希望納期"] >= start) & (df["希望納期"] <= end)].copy()
 
           print(f"該当件数: {len(filtered)}件")
 
@@ -80,8 +80,8 @@ jobs:
               details = []
               for _, row in group.iterrows():
                   details.append(
-                      f"{row['製品詳細']} "
-                      f"{int(row['販売単価'])} x {int(row['数量'])} = {int(row['販売価格'])}"
+                      str(row['製品詳細']) + " " +
+                      str(int(row['数量']))
                   )
               groups.append({
                   "担当者": staff,
