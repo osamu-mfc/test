@@ -46,13 +46,13 @@ jobs:
           print("Download complete: /tmp/data.xlsx")
           EOF
 
-# ── STEP 2: Pandas で読み込み確認（先頭5行） ────────
+      # ── STEP 2: Pandas で読み込み確認（先頭5行） ────────
       - name: Process with Pandas
         run: |
           python - <<EOF
           import pandas as pd
 
-          df = pd.read_excel("/tmp/data.xlsx", sheet_name=0)
+          df = pd.read_excel("/tmp/data.xlsx", sheet_name=0, header=0)
 
           # 先頭5行を確認用に保存
           df.head(5).to_csv("/tmp/result.tsv", sep="\t", index=False)
