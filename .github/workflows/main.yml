@@ -1,5 +1,4 @@
 name: SMTP Mail Test
-
 on:
   schedule:
     - cron: '0 23 * * 1'
@@ -8,8 +7,60 @@ on:
 jobs:
   send-mail:
     runs-on: ubuntu-latest
-
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: pip install google-auth google-auth-httplib2 google-api-python-client pandas openpyxl
+
+      # ── STEP 1: Google Drive から Excel をダウンロード ──
+      - name: Download Excel from Google Drive
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          EXCEL_FILE_ID: ${{ secrets.EXCEL_FILE_ID }}
+        run: |
+          python - <<EOF
+          import os, io, json
+          from google.oauth2 import service_account
+          from googleapiclient.discovery import build
+          from googleapiclient.http import MediaIoBaseDownload
+
+          sa_info = json.loads(os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"])
+          creds = service_account.Credentials.from_service_account_info(
+              sa_info,
+              scopes=["https://www.googleapis.com/auth/drive.readonly"]
+          )
+          drive = build("drive", "v3", credentials=creds)
+
+          request = drive.files().get_media(fileId=os.environ["EXCEL_FILE_ID"])
+          buffer = io.BytesIO()
+          downloader = MediaIoBaseDownload(buffer, request)
+          done = False
+          while not done:
+              _, done = downloader.next_chunk()
+
+          with open("/tmp/data.xlsx", "wb") as f:
+              f.write(buffer.getvalue())
+
+          print("Download complete: /tmp/data.xlsx")
+          EOF
+
+# ── STEP 2: Pandas で読み込み確認（先頭5行） ────────
+      - name: Process with Pandas
+        run: |
+          python - <<EOF
+          import pandas as pd
+
+          df = pd.read_excel("/tmp/data.xlsx", sheet_name=0)
+
+          # 先頭5行を確認用に保存
+          df.head(5).to_csv("/tmp/result.tsv", sep="\t", index=False)
+          print(f"Columns: {list(df.columns)}")
+          print(f"Total rows: {len(df)}  →  先頭5行を出力")
+          EOF
+
+      # ── STEP 3: メール送信 ─────────────────────────────
       - name: Send Mail
         env:
           SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
@@ -19,19 +70,40 @@ jobs:
           SMTP_TO: ${{ secrets.SMTP_USER }}
         run: |
           python - <<EOF
-          import os
-          import smtplib
+          import os, smtplib
+          import pandas as pd
           from email.mime.text import MIMEText
 
-          msg = MIMEText("GitHub Actions SMTPテスト")
-          msg["Subject"] = "SMTP Test"
-          msg["From"] = os.environ["SMTP_USER"]
-          msg["To"] = os.environ["SMTP_TO"]
+          df = pd.read_csv("/tmp/result.tsv", sep="\t")
 
-          server = smtplib.SMTP(os.environ["SMTP_SERVER"], int(os.environ["SMTP_PORT"]))
-          server.login(os.environ["SMTP_USER"], os.environ["SMTP_PASS"])
-          server.sendmail(msg["From"], msg["To"], msg.as_string())
-          server.quit()
+          header = "\t".join(df.columns.astype(str))
+          sep    = "-" * 60
+          rows   = ["\t".join(str(v) for v in row) for _, row in df.iterrows()]
+          table  = "\n".join([header, sep] + rows)
 
-          print("Mail sent")
+          mail_body = f"【Excel読み込み確認 - 先頭5行】\n\n{table}"
+
+          try:
+              msg = MIMEText(mail_body, "plain", "utf-8")
+              msg["Subject"] = "SMTP Test + Excel確認（先頭5行）"
+              msg["From"] = os.environ["SMTP_USER"]
+              msg["To"]   = os.environ["SMTP_TO"]
+
+              port = int(os.environ["SMTP_PORT"])
+              server_addr = os.environ["SMTP_SERVER"]
+
+              if port == 465:
+                  server = smtplib.SMTP_SSL(server_addr, port)
+              else:
+                  server = smtplib.SMTP(server_addr, port)
+                  server.starttls()
+
+              server.login(os.environ["SMTP_USER"], os.environ["SMTP_PASS"])
+              server.sendmail(msg["From"], [msg["To"]], msg.as_string())
+              server.quit()
+              print("Mail sent")
+
+          except Exception as e:
+              print(f"Error: {e}")
+              raise
           EOF
