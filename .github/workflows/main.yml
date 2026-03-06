@@ -54,7 +54,7 @@ jobs:
 
           df = pd.read_excel("/tmp/data.xlsx", sheet_name=0, header=1)
 
-          target_date = (datetime.today() - timedelta(days=3)).date()
+          target_date = (datetime.today() + timedelta(days=3)).date()
 
           df["希望納期"] = pd.to_datetime(df["希望納期"], errors="coerce").dt.date
           filtered = df[df["希望納期"] == target_date].copy()
