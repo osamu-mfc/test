@@ -58,7 +58,7 @@ jobs:
           # 実行日の翌日から7日間
           today    = datetime.today().date()
           start    = today + timedelta(days=1)   # 翌日（土）
-          end      = start + timedelta(days=6)   # 7日後（金）
+          end      = start + timedelta(days=7)   # 8日後（土）
           print(f"抽出範囲: {start} 〜 {end}")
 
           # 希望納期を日付型に変換して絞り込み
